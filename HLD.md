@@ -68,30 +68,30 @@ When a supplier submits a quotation for an active RFQ:
 
 ```mermaid
 flowchart TD
-    A[Supplier Submits Quote] --> B{Is Auction ACTIVE?}
-    B -- No --> C[Reject: Auction Closed / Expired]
-    B -- Yes --> D[Calculate Total Price = Freight + Origin + Dest]
-    D --> E[Fetch Previous Bids & Current Rankings]
-    E --> F{Is Current Time within Trigger Window X?}
-    F -- No (Too early) --> G[Save Bid & Log BID_SUBMITTED]
-    F -- Yes --> H{Evaluate Extension Trigger Condition}
+    A["Supplier Submits Quote"] --> B{"Is Auction ACTIVE?"}
+    B -- "No" --> C["Reject: Auction Closed / Expired"]
+    B -- "Yes" --> D["Calculate Total Price = Freight + Origin + Dest"]
+    D --> E["Fetch Previous Bids & Current Rankings"]
+    E --> F{"Is Current Time within Trigger Window X?"}
+    F -- "No (Too early)" --> G["Save Bid & Log BID_SUBMITTED"]
+    F -- "Yes" --> H{"Evaluate Extension Trigger Condition"}
     
-    H -- BID_RECEIVED --> I[Trigger Extension]
-    H -- ANY_RANK_CHANGE --> J{Did Supplier Rank Order Change?}
-    H -- L1_RANK_CHANGE --> K{Did L1 Lowest Bidder Change?}
+    H -- "BID_RECEIVED" --> I["Trigger Extension"]
+    H -- "ANY_RANK_CHANGE" --> J{"Did Supplier Rank Order Change?"}
+    H -- "L1_RANK_CHANGE" --> K{"Did L1 Lowest Bidder Change?"}
     
-    J -- Yes --> I
-    J -- No --> G
-    K -- Yes --> I
-    K -- No --> G
+    J -- "Yes" --> I
+    J -- "No" --> G
+    K -- "Yes" --> I
+    K -- "No" --> G
     
-    I --> L[Calculate: Proposed Close = Bid Close + Y minutes]
-    L --> M{Is Proposed Close > Forced Bid Close Time?}
-    M -- No --> N[Set Bid Close = Proposed Close]
-    M -- Yes --> O[Set Bid Close = Forced Bid Close Time (Capped)]
-    N --> P[Record AUCTION_EXTENDED in Activity Log]
+    I --> L["Calculate: Proposed Close = Bid Close + Y minutes"]
+    L --> M{"Is Proposed Close > Forced Bid Close Time?"}
+    M -- "No" --> N["Set Bid Close = Proposed Close"]
+    M -- "Yes" --> O["Set Bid Close = Forced Bid Close Time (Capped)"]
+    N --> P["Record AUCTION_EXTENDED in Activity Log"]
     O --> P
-    P --> Q[Save Bid & Return Updated State]
+    P --> Q["Save Bid & Return Updated State"]
 ```
 
 ### Supported Extension Rules:
