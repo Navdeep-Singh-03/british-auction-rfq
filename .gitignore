@@ -1,0 +1,20 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*/__pycache__/
+backend/app/__pycache__/
+backend/.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+backend/*.db
+backend/.env
+
+# Node / React
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.log
+
+# macOS
+.DS_Store
