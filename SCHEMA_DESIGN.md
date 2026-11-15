@@ -1,113 +1,113 @@
-# Database Schema Design: British Auction RFQ System
+# Database Schema Design
 
-## 1. Entity Relationship (ER) Diagram
+## ER Diagram
 
 ```mermaid
 erDiagram
-    RFQS ||--o{ BIDS : "receives"
-    RFQS ||--o{ ACTIVITY_LOGS : "tracks"
+    RFQS ||--o{ BIDS : "has many"
+    RFQS ||--o{ ACTIVITY_LOGS : "has many"
 
     RFQS {
-        int id PK "Auto-increment primary key"
-        string reference_id UK "Unique reference e.g. RFQ-MUM-DEL-101"
-        string name "RFQ Title / Description"
-        string pickup_date "Scheduled shipment / service date"
-        timestamp bid_start_time "When bidding opens"
-        timestamp bid_close_time "Current closing deadline (dynamically extended)"
-        timestamp forced_bid_close_time "Hard closing cap (unbreachable)"
-        int trigger_window_minutes "X minutes before close to monitor activity"
-        int extension_duration_minutes "Y minutes added on qualifying bid"
-        string extension_trigger "Rule: BID_RECEIVED, ANY_RANK_CHANGE, L1_RANK_CHANGE"
-        boolean is_british_auction "Flag for dynamic extensions"
-        string status "ACTIVE, CLOSED, FORCE_CLOSED, UPCOMING"
-        timestamp created_at "Record creation timestamp"
+        int id PK
+        string reference_id UK
+        string name
+        string pickup_date
+        timestamp bid_start_time
+        timestamp bid_close_time
+        timestamp forced_bid_close_time
+        int trigger_window_minutes
+        int extension_duration_minutes
+        string extension_trigger
+        boolean is_british_auction
+        string status
+        timestamp created_at
     }
 
     BIDS {
-        int id PK "Auto-increment primary key"
-        int rfq_id FK "References rfqs.id"
-        string supplier_name "Name of participating supplier"
-        string carrier_name "Carrier / Vehicle / Vessel"
-        float freight_charges "Base freight charge"
-        float origin_charges "Local origin handling charges"
-        float destination_charges "Destination port/terminal charges"
-        float total_price "Computed total quote price"
-        string transit_time "Promised transit duration (e.g. 24 Hours)"
-        string validity_of_quote "Quote validity duration (e.g. 15 Days)"
-        timestamp submitted_at "Quote placement timestamp"
+        int id PK
+        int rfq_id FK
+        string supplier_name
+        string carrier_name
+        float freight_charges
+        float origin_charges
+        float destination_charges
+        float total_price
+        string transit_time
+        string validity_of_quote
+        timestamp submitted_at
     }
 
     ACTIVITY_LOGS {
-        int id PK "Auto-increment primary key"
-        int rfq_id FK "References rfqs.id"
-        string action_type "RFQ_CREATED, BID_SUBMITTED, AUCTION_EXTENDED, etc."
-        string supplier_name "Supplier associated with action (nullable)"
-        float bid_amount "Quote amount (nullable)"
-        timestamp old_close_time "Previous close deadline (nullable)"
-        timestamp new_close_time "Extended close deadline (nullable)"
-        string reason "Human-readable explanation of the action"
-        timestamp created_at "Audit record timestamp"
+        int id PK
+        int rfq_id FK
+        string action_type
+        string supplier_name
+        float bid_amount
+        timestamp old_close_time
+        timestamp new_close_time
+        string reason
+        timestamp created_at
     }
 ```
 
----
+## Table Details
 
-## 2. Table Specifications
+### rfqs
 
-### 2.1. Table: `rfqs`
-Stores the RFQ master configuration, bidding schedule, and anti-sniping extension parameters.
+Main table that stores each auction along with its British Auction configuration.
 
-| Column Name | Data Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `INTEGER` | Primary Key, Auto-increment | Internal unique identifier |
-| `reference_id` | `VARCHAR(100)` | Unique, Indexed, Not Null | Business reference ID (e.g. `RFQ-2026-001`) |
-| `name` | `VARCHAR(255)` | Not Null | RFQ title / service scope |
-| `pickup_date` | `VARCHAR(50)` | Not Null | Service or cargo pickup date |
-| `bid_start_time` | `TIMESTAMP` | Not Null | Auction start timestamp (UTC) |
-| `bid_close_time` | `TIMESTAMP` | Not Null | Dynamic closing deadline, updated on extension |
-| `forced_bid_close_time` | `TIMESTAMP` | Not Null | Hard cap; close time can never exceed this |
-| `trigger_window_minutes` | `INTEGER` | Not Null, Default `10` | Parameter X: activity window before close |
-| `extension_duration_minutes` | `INTEGER` | Not Null, Default `5` | Parameter Y: extra minutes granted on trigger |
-| `extension_trigger` | `VARCHAR(50)` | Not Null, Default `'BID_RECEIVED'` | Rule: `BID_RECEIVED`, `ANY_RANK_CHANGE`, `L1_RANK_CHANGE` |
-| `is_british_auction` | `BOOLEAN` | Not Null, Default `TRUE` | Enables or disables British Auction extension behavior |
-| `status` | `VARCHAR(30)` | Not Null, Default `'ACTIVE'` | Auction state (`ACTIVE`, `CLOSED`, `FORCE_CLOSED`, `UPCOMING`) |
-| `created_at` | `TIMESTAMP` | Not Null, Default `UTC_NOW` | Timestamp when RFQ was created |
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | Primary key, auto-increment |
+| reference_id | VARCHAR | Unique business ID like `RFQ-MUM-DEL-101` |
+| name | VARCHAR | Title describing the shipment |
+| pickup_date | VARCHAR | When the goods need to be picked up |
+| bid_start_time | TIMESTAMP | When suppliers can start bidding |
+| bid_close_time | TIMESTAMP | Current closing deadline (this gets extended dynamically) |
+| forced_bid_close_time | TIMESTAMP | Absolute hard cap — close time can never go past this |
+| trigger_window_minutes | INTEGER | X — how many minutes before close to watch for activity |
+| extension_duration_minutes | INTEGER | Y — how many minutes to add when triggered |
+| extension_trigger | VARCHAR | One of: `BID_RECEIVED`, `ANY_RANK_CHANGE`, `L1_RANK_CHANGE` |
+| is_british_auction | BOOLEAN | Whether the extension mechanism is enabled |
+| status | VARCHAR | `ACTIVE`, `CLOSED`, `FORCE_CLOSED`, or `UPCOMING` |
+| created_at | TIMESTAMP | When this RFQ was created |
 
-### 2.2. Table: `bids`
-Stores all submitted supplier quotes.
+### bids
 
-| Column Name | Data Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `INTEGER` | Primary Key, Auto-increment | Unique quote identifier |
-| `rfq_id` | `INTEGER` | Foreign Key (`rfqs.id` ON DELETE CASCADE), Not Null | Associated RFQ |
-| `supplier_name` | `VARCHAR(150)` | Not Null | Name of bidding vendor |
-| `carrier_name` | `VARCHAR(150)` | Not Null | Carrier or transport partner |
-| `freight_charges` | `NUMERIC(12,2)` | Not Null, Check `>= 0` | Base freight cost |
-| `origin_charges` | `NUMERIC(12,2)` | Not Null, Default `0.0` | Origin handling / documentation charges |
-| `destination_charges` | `NUMERIC(12,2)` | Not Null, Default `0.0` | Destination delivery / terminal charges |
-| `total_price` | `NUMERIC(12,2)` | Not Null | Calculated total: `freight + origin + destination` |
-| `transit_time` | `VARCHAR(50)` | Not Null | Promised delivery timeframe |
-| `validity_of_quote` | `VARCHAR(50)` | Not Null | Expiration period of the submitted quote |
-| `submitted_at` | `TIMESTAMP` | Not Null, Default `UTC_NOW` | Submission timestamp |
+Each row is a supplier's submitted quote for an RFQ. Multiple suppliers can bid on the same RFQ, and the same supplier can bid multiple times (to lower their price).
 
-### 2.3. Table: `activity_logs`
-Provides an immutable audit trail of bids, rankings, and anti-sniping deadline extensions.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | Primary key |
+| rfq_id | INTEGER | FK to rfqs.id (cascade delete) |
+| supplier_name | VARCHAR | Company name |
+| carrier_name | VARCHAR | Vehicle/vessel used |
+| freight_charges | FLOAT | Base freight cost |
+| origin_charges | FLOAT | Charges at pickup location |
+| destination_charges | FLOAT | Charges at delivery location |
+| total_price | FLOAT | Sum of above three (calculated on submit) |
+| transit_time | VARCHAR | e.g. "24 Hours", "3 Days" |
+| validity_of_quote | VARCHAR | How long the quote is valid |
+| submitted_at | TIMESTAMP | When the bid was placed |
 
-| Column Name | Data Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `INTEGER` | Primary Key, Auto-increment | Log identifier |
-| `rfq_id` | `INTEGER` | Foreign Key (`rfqs.id` ON DELETE CASCADE), Not Null | Associated RFQ |
-| `action_type` | `VARCHAR(50)` | Not Null | `RFQ_CREATED`, `BID_SUBMITTED`, `AUCTION_EXTENDED`, `EXTENSION_CAPPED`, `AUCTION_CLOSED` |
-| `supplier_name` | `VARCHAR(150)` | Nullable | Supplier associated with the event |
-| `bid_amount` | `NUMERIC(12,2)` | Nullable | Price associated with the bid event |
-| `old_close_time` | `TIMESTAMP` | Nullable | Previous close time before extension |
-| `new_close_time` | `TIMESTAMP` | Nullable | New close time after extension |
-| `reason` | `TEXT` | Not Null | Clear justification for the extension or event |
-| `created_at` | `TIMESTAMP` | Not Null, Default `UTC_NOW` | Timestamp of the event |
+### activity_logs
 
----
+Audit trail for everything that happens in an auction. Used to show the timeline on the frontend and to explain why each extension happened.
 
-## 3. Database Indexes & Optimization
-1. `rfqs(reference_id)`: Unique B-tree index for rapid lookups and duplicate prevention.
-2. `bids(rfq_id, total_price ASC)`: Composite index to rapidly retrieve and sort rankings (L1, L2, L3) with minimal I/O overhead.
-3. `activity_logs(rfq_id, created_at DESC)`: Index for displaying the audit timeline in reverse chronological order.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | Primary key |
+| rfq_id | INTEGER | FK to rfqs.id (cascade delete) |
+| action_type | VARCHAR | `RFQ_CREATED`, `BID_SUBMITTED`, `AUCTION_EXTENDED`, etc. |
+| supplier_name | VARCHAR | Which supplier triggered this event (nullable) |
+| bid_amount | FLOAT | The bid amount involved (nullable) |
+| old_close_time | TIMESTAMP | Previous close time before extension (nullable) |
+| new_close_time | TIMESTAMP | New close time after extension (nullable) |
+| reason | TEXT | Human-readable explanation |
+| created_at | TIMESTAMP | When this event occurred |
+
+## Indexes
+
+- `rfqs(reference_id)` — unique index for fast lookup and preventing duplicates
+- `bids(rfq_id, total_price)` — for quickly fetching ranked bids per RFQ
+- `activity_logs(rfq_id, created_at)` — for displaying the timeline in order

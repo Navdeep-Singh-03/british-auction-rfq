@@ -1,114 +1,109 @@
-# High-Level Design (HLD): British Auction in RFQ System
+# High-Level Design: British Auction in RFQ System
 
-## 1. Executive Summary
-This document outlines the architecture and design of the **British Auction RFQ (Request for Quotation) System**. The platform enables buyers to initiate competitive procurement events and suppliers to submit transparent, iterative quotations. 
+## Overview
 
-To eliminate last-second bidding manipulation (bid sniping), the system employs **British Auction dynamic extensions**: whenever qualifying bidding activity happens within a configurable **Trigger Window (X minutes)** before closing, the auction deadline is automatically extended by **Extension Duration (Y minutes)**, while strictly honoring an unbreachable **Forced Bid Close Time** hard cap.
+This is a procurement platform where buyers publish RFQs (Request for Quotation) and suppliers compete by submitting price quotes. The twist is that the system uses a British Auction mechanism to prevent last-second bid sniping — if competitive bidding activity happens close to the deadline, the auction automatically extends.
 
----
+The key constraint is that the auction can never extend past a hard cap called Forced Bid Close Time. This prevents auctions from running forever.
 
-## 2. Architecture Diagram
+## Architecture
 
 ```
-+-------------------------------------------------------+
-|                     React Frontend                    |
-|  - Buyer Dashboard (RFQ Creation & Config)           |
-|  - Supplier Portal (Quote Submission & Rankings)      |
-|  - Real-time Countdown & Audit Activity Log           |
-+-------------------------------------------------------+
-                           ↕ (HTTP / REST APIs)
-+-------------------------------------------------------+
-|                    FastAPI Backend                    |
-|  - REST Endpoints (/rfqs, /bids, /health)             |
-|  - Pydantic Input Validation & Sanitization           |
-|  - British Auction Engine:                            |
-|      * Window detection [Close - X min, Close]       |
-|      * Extension trigger evaluation                   |
-|      * Hard cap enforcement (Forced Close Time)       |
-+-------------------------------------------------------+
-                           ↕ (SQLAlchemy ORM)
-+-------------------------------------------------------+
-|                  PostgreSQL Database                  |
-|  - Tables: rfqs, bids, activity_logs                  |
-|  - Automatic local SQLite fallback for dev            |
-+-------------------------------------------------------+
++------------------------------------------+
+|            React Frontend                |
+|  Buyer dashboard, Supplier portal,      |
+|  countdown timer, activity log           |
++------------------------------------------+
+              ↕  REST API (HTTP)
++------------------------------------------+
+|           FastAPI Backend                |
+|  CRUD endpoints, bid processing,         |
+|  auction extension engine                |
++------------------------------------------+
+              ↕  SQLAlchemy ORM
++------------------------------------------+
+|         PostgreSQL / SQLite              |
+|  Tables: rfqs, bids, activity_logs       |
++------------------------------------------+
 ```
 
----
+The frontend talks to the backend via REST APIs. There's no authentication layer right now — the buyer/supplier distinction is handled via a view toggle on the frontend side. The backend handles all the auction logic including checking trigger windows and deciding whether to extend.
 
-## 3. Core Components
+## How the Extension Logic Works
 
-### 3.1. Frontend (React + Vite)
-* Built with modern React using clean hooks (`useState`, `useEffect`).
-* **Auto-Sync Mechanism:** Polls the active RFQ endpoints every 3 seconds while on the auction detail view. This guarantees that buyers and competing suppliers see updated L1 rankings, bids, and time extensions live without needing complex external brokers.
-* **Buyer Dashboard:** Intuitive form to define RFQ details, scheduled close times, forced close limits, and British Auction parameters (X, Y, trigger condition).
-* **Supplier Dashboard:** Real-time quote submission modal with price breakdown (Freight + Origin + Destination charges) and live countdown timer.
-* **Audit Activity Timeline:** Chronological log displaying every bid placed, every time extension granted with its exact reason, and hard cap notifications.
-
-### 3.2. Backend (FastAPI + Python 3.11)
-* **REST APIs:** Structured endpoints for RFQ lifecycle management and bid processing.
-* **Pydantic Schemas:** Strong validation ensuring:
-  1. `Forced Bid Close Time > Bid Close Time`
-  2. `Bid Close Time > Bid Start Time`
-  3. Positive freight and charge inputs.
-* **Auction Engine (`auction_engine.py`):**
-  - Isolates business rules for anti-sniping and deadline extensions.
-  - Computes dynamic status (`ACTIVE`, `CLOSED`, `FORCE_CLOSED`, `UPCOMING`).
-
-### 3.3. Database Layer (SQLAlchemy + PostgreSQL)
-* Relational schema connecting RFQs to multiple supplier quotes and persistent audit logs.
-* Database session dependency injection (`get_db`) with connection cleanup.
-* Environment-driven configuration via `.env` with graceful local SQLite fallback for zero-friction setup.
-
----
-
-## 4. British Auction Logic & Extension Workflow
-
-When a supplier submits a quotation for an active RFQ:
+When a supplier submits a bid, the backend runs through this flow:
 
 ```mermaid
 flowchart TD
-    A["Supplier Submits Quote"] --> B{"Is Auction ACTIVE?"}
-    B -- "No" --> C["Reject: Auction Closed / Expired"]
-    B -- "Yes" --> D["Calculate Total Price = Freight + Origin + Dest"]
-    D --> E["Fetch Previous Bids & Current Rankings"]
-    E --> F{"Is Current Time within Trigger Window X?"}
-    F -- "No (Too early)" --> G["Save Bid & Log BID_SUBMITTED"]
-    F -- "Yes" --> H{"Evaluate Extension Trigger Condition"}
-    
-    H -- "BID_RECEIVED" --> I["Trigger Extension"]
-    H -- "ANY_RANK_CHANGE" --> J{"Did Supplier Rank Order Change?"}
-    H -- "L1_RANK_CHANGE" --> K{"Did L1 Lowest Bidder Change?"}
-    
+    A["Supplier submits a bid"] --> B{"Is auction still ACTIVE?"}
+    B -- "No" --> C["Reject bid"]
+    B -- "Yes" --> D["Calculate total price"]
+    D --> E["Get existing bids"]
+    E --> F{"Are we inside the trigger window?"}
+    F -- "No" --> G["Just save the bid, no extension"]
+    F -- "Yes" --> H{"Check trigger condition"}
+
+    H -- "BID_RECEIVED" --> I["Extend"]
+    H -- "ANY_RANK_CHANGE" --> J{"Did rankings change?"}
+    H -- "L1_RANK_CHANGE" --> K{"Did L1 change?"}
+
     J -- "Yes" --> I
     J -- "No" --> G
     K -- "Yes" --> I
     K -- "No" --> G
-    
-    I --> L["Calculate: Proposed Close = Bid Close + Y minutes"]
-    L --> M{"Is Proposed Close > Forced Bid Close Time?"}
-    M -- "No" --> N["Set Bid Close = Proposed Close"]
-    M -- "Yes" --> O["Set Bid Close = Forced Bid Close Time (Capped)"]
-    N --> P["Record AUCTION_EXTENDED in Activity Log"]
+
+    I --> L["new_close = current_close + Y minutes"]
+    L --> M{"new_close > forced_close?"}
+    M -- "No" --> N["Update close time"]
+    M -- "Yes" --> O["Cap at forced close time"]
+    N --> P["Log extension in activity_logs"]
     O --> P
-    P --> Q["Save Bid & Return Updated State"]
+    P --> Q["Save bid, return response"]
 ```
 
-### Supported Extension Rules:
-1. **Rule A (`BID_RECEIVED`):** Any bid submitted in the last X minutes triggers an extension of Y minutes.
-2. **Rule B (`ANY_RANK_CHANGE`):** If any supplier moves up or down in the overall ranking during the trigger window, the auction extends.
-3. **Rule C (`L1_RANK_CHANGE`):** The auction extends **only** when the lowest quotation (L1) is beaten by another supplier.
+The trigger window check is straightforward:
+```
+window_start = bid_close_time - X_minutes
+is_in_window = window_start <= now <= bid_close_time
+```
 
----
+And the hard cap is enforced with:
+```
+new_close = min(proposed_close, forced_bid_close_time)
+```
 
-## 5. Anti-Sniping & Forced Close Hard Cap
-* **The Problem:** In open auctions, suppliers often place bids in the last 10 seconds to prevent others from reacting ("sniping").
-* **British Auction Solution:** Extends the deadline by Y minutes whenever qualifying competitive activity occurs inside window X.
-* **The Risk:** Unlimited extensions could cause auctions to run indefinitely.
-* **The Invariant:** `new_close = min(current_close + Y, forced_bid_close_time)`. Under no circumstances can any bid or extension push the auction deadline beyond the Forced Close Time. Once the hard cap is reached, no further extensions are granted.
+## API Endpoints
 
----
+| Method | Endpoint | What it does |
+|--------|----------|--------------|
+| GET | `/api/rfqs` | List all RFQs with current status and lowest bid |
+| POST | `/api/rfqs` | Create a new RFQ with auction config |
+| GET | `/api/rfqs/{id}` | Get full RFQ details — bids (ranked), activity logs, config |
+| POST | `/api/rfqs/{id}/bids` | Submit a supplier quote, triggers extension check |
+| GET | `/api/health` | Health check |
 
-## 6. Scalability & Future Enhancements
-* **WebSockets:** Can replace client-side polling with push notifications via FastAPI's native WebSocket support.
-* **Redis / Celery:** For high-traffic auctions with thousands of concurrent suppliers, Redis can be used for distributed locking (preventing race conditions during simultaneous bids) and Celery for async notification emails.
+## Frontend Approach
+
+Kept it simple with just `useState` and `useEffect`. No Redux or routing library.
+
+- The detail page polls `GET /api/rfqs/{id}` every 3 seconds to stay in sync.
+- The countdown timer ticks every second using `setInterval`.
+- Buyer vs Supplier view is just a state variable (`currentView`) that controls which buttons are visible.
+
+## Database Design
+
+Three tables with straightforward relationships:
+- **rfqs** — stores the auction config (X minutes, Y minutes, trigger rule, close times)
+- **bids** — each quote submitted by a supplier, linked to an RFQ
+- **activity_logs** — audit trail of everything that happened (bids placed, extensions granted, reasons why)
+
+One RFQ has many bids, one RFQ has many activity logs. Both use cascade delete.
+
+Full schema details and ER diagram are in `SCHEMA_DESIGN.md`.
+
+## What I'd Improve With More Time
+
+- Add WebSocket support instead of polling for real-time updates
+- Add proper user authentication (JWT) so buyers and suppliers have actual accounts
+- Use Redis for handling concurrent bid submissions and preventing race conditions
+- Deploy with Docker for easier setup
